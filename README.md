@@ -5,7 +5,7 @@ anywhere on the page and start reading instantly. It's a **viewer, not an
 editor** — no toolbars, no accounts, no uploads. Everything runs locally in
 your browser.
 
-🔗 **Live:** <https://epub.mykk.us/>
+🔗 **Live:** <https://epub-viewer.us/>
 
 ![Single file](https://img.shields.io/badge/build-single%20HTML%20file-success) ![No build step](https://img.shields.io/badge/build%20step-none-success) ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -72,7 +72,7 @@ It's a static site — Cloudflare just serves `index.html`. The included
 `frame-ancestors`, etc.) automatically. Every push to `main` then
 auto-deploys.
 
-Add your custom domain `epub.mykk.us` under the project's **Custom domains**
+Add your custom domain `epub-viewer.us` under the project's **Custom domains**
 tab — Cloudflare creates the DNS record and provisions SSL for you.
 
 ## How it works
@@ -110,7 +110,7 @@ site (see [Privacy](#privacy)).
 Your books stay on your device — they're unzipped and rendered in the browser
 and never uploaded anywhere, and your content is never sent to any server.
 
-The hosted site at **epub.mykk.us** uses a self-hosted
+The hosted site at **epub-viewer.us** uses a self-hosted
 [Plausible](https://plausible.io/) instance for **privacy-friendly, cookieless**
 page analytics: aggregate visit counts only — no personal data, no cross-site
 tracking, no advertising. Plausible automatically ignores `localhost` and
