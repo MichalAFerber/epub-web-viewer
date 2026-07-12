@@ -6,6 +6,8 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" id="themeColor">
 <meta name="description" content="A fast, single-file EPUB viewer. Drag & drop an EPUB to read it — right in your browser.">
+<!-- Defense-in-depth: even from file:// a malicious book can't fetch remote resources -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://plausible.thompsonblack.us; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src https://plausible.thompsonblack.us; base-uri 'none'; form-action 'none'">
 <title>MyKK EPUB Viewer</title>
 <!-- Privacy-friendly, cookieless analytics (self-hosted Plausible) -->
 <script defer data-domain="epub-viewer.us" src="https://plausible.thompsonblack.us/js/script.js"></script>
@@ -136,10 +138,11 @@
     width:min(21rem,86vw); display:flex; flex-direction:column;
     background:var(--surface); border-right:1px solid var(--border-soft);
     box-shadow:0 10px 40px var(--shadow);
-    transform:translateX(-105%); transition:transform .25s ease;
+    transform:translateX(-105%); visibility:hidden;
+    transition:transform .25s ease, visibility 0s .25s;
     padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom);
   }
-  .toc-panel.open{transform:translateX(0)}
+  .toc-panel.open{transform:translateX(0); visibility:visible; transition:transform .25s ease, visibility 0s}
   .toc-head{
     flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
     padding:.55rem .6rem .55rem 1rem; border-bottom:1px solid var(--border-soft);
@@ -380,6 +383,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   var chapterSeq = 0;     // guards against stale async chapter loads
   var bookSeq = 0;        // bumped on clear/new-open; guards stale TOC loads
 
+  // Strip remote/srcset resource references before they ever hit the DOM — a malicious
+  // book must not be able to phone home just by being opened. Local paths pass through
+  // and are swapped to in-memory blob: URLs after insertion; data: URIs are self-contained.
+  if (window.DOMPurify && DOMPurify.addHook){
+    DOMPurify.addHook("uponSanitizeAttribute", function(node, data){
+      var an = (data.attrName || "").toLowerCase();
+      if (an === "srcset"){ data.keepAttr = false; return; }
+      var tag = (node.tagName || "").toLowerCase();
+      if (tag !== "img" && tag !== "audio" && tag !== "video" && tag !== "source" &&
+          tag !== "track" && tag !== "image" && tag !== "use") return;
+      if (an === "src" || an === "poster" || an === "href" || an === "xlink:href"){
+        // normalize the way URL parsers do: drop tabs/newlines anywhere and leading controls/space
+        var v = (data.attrValue || "").replace(/[\t\n\r]/g, "").replace(/^[\u0000-\u0020]+/, "");
+        if (isExternal(v) && !/^data:/i.test(v)) data.keepAttr = false;
+      }
+    });
+  }
+
   function toast(msg){
     toastEl.textContent = msg;
     toastEl.classList.add("show");
@@ -437,6 +458,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return out;
   }
 
+  // True only if encryption.xml encrypts something beyond IDPF/Adobe font obfuscation
+  function hasRealEncryption(xml){
+    var d = parseXml(xml);
+    if (!d) return true;                       // unreadable: assume the worst
+    var data = allLocal(d, "EncryptedData");
+    if (!data.length) return false;
+    for (var i = 0; i < data.length; i++){
+      var m = firstLocal(data[i], "EncryptionMethod");
+      var alg = (m && m.getAttribute("Algorithm")) || "";
+      if (alg !== "http://www.idpf.org/2008/embedding" &&
+          alg !== "http://ns.adobe.com/pdf/enc#RC") return true;
+    }
+    return false;
+  }
+
   /* ---------- Resource extraction ---------- */
   var EXT_MIME = {
     jpg:"image/jpeg", jpeg:"image/jpeg", png:"image/png", gif:"image/gif",
@@ -454,7 +490,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     if (blobUrls[path]) return Promise.resolve(blobUrls[path]);
     var f = book && book.zf(path);
     if (!f) return Promise.resolve(null);
+    var seq = bookSeq;   // a load resolving after clear/new-open must not touch the new book's cache
     return f.async("arraybuffer").then(function(buf){
+      if (seq !== bookSeq) return null;
       if (!blobUrls[path]) blobUrls[path] = URL.createObjectURL(new Blob([buf], { type: mimeFor(path) }));
       return blobUrls[path];
     }, function(){ return null; });
@@ -489,7 +527,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
       var container = zf("META-INF/container.xml");
       if (!container){ toast("That doesn't look like an EPUB (no META-INF/container.xml)"); return; }
-      var drm = !!zf("META-INF/encryption.xml");
+      // encryption.xml that only obfuscates embedded fonts (InDesign's default) isn't DRM
+      var encFile = zf("META-INF/encryption.xml");
+      var drmCheck = encFile
+        ? encFile.async("text").then(hasRealEncryption, function(){ return true; })
+        : Promise.resolve(false);
       return container.async("text").then(function(xml){
         var cdoc = parseXml(xml);
         if (!cdoc){ toast("Couldn't read this EPUB's container.xml"); return; }
@@ -504,7 +546,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         var opfFile = opfPath && zf(opfPath);
         if (!opfFile){ toast("Couldn't find this EPUB's package file"); return; }
         return opfFile.async("text").then(function(opfXml){
-          loadPackage(zf, opfXml, opfPath, name, drm);
+          loadPackage(zf, opfXml, opfPath, name, drmCheck);
         });
       });
     }, function(){
@@ -514,7 +556,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
   }
 
-  function loadPackage(zf, opfXml, opfPath, name, drm){
+  function loadPackage(zf, opfXml, opfPath, name, drmCheck){
     var opf = parseXml(opfXml);
     if (!opf){ toast("Couldn't read this EPUB's package file"); return; }
     var opfDir = dirOf(opfPath);
@@ -542,7 +584,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       byPath[rec.path] = rec;
     }
 
-    var spine = [], spineIdx = {};
+    var spine = [], spineIdx = {}, spineIdxLower = {};
     var sEl = firstLocal(opf, "spine");
     var refs = sEl ? allLocal(sEl, "itemref") : [];
     for (i = 0; i < refs.length; i++){
@@ -550,10 +592,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var rec2 = idref && manifest[idref];
       if (rec2 && zf(rec2.path) && spineIdx[rec2.path] == null){
         spineIdx[rec2.path] = spine.length;
+        if (spineIdxLower[rec2.path.toLowerCase()] == null) spineIdxLower[rec2.path.toLowerCase()] = spine.length;
         spine.push(rec2);
       }
     }
-    if (!spine.length){ toast(drm ? "This book appears to be DRM-protected" : "This EPUB has no readable chapters"); return; }
+    if (!spine.length){
+      drmCheck.then(function(isDrm){
+        toast(isDrm ? "This book appears to be DRM-protected" : "This EPUB has no readable chapters");
+      });
+      return;
+    }
 
     clearAll();
     book = {
@@ -561,10 +609,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       title: title || (name ? name.replace(/\.epub$/i, "") : "Untitled book"),
       author: author,
       manifest: manifest, byPath: byPath,
-      spine: spine, spineIdx: spineIdx,
+      spine: spine, spineIdx: spineIdx, spineIdxLower: spineIdxLower,
       toc: []
     };
-    if (drm) toast("Heads up: this book has encrypted resources — some content may not display");
+    var drmSeq = bookSeq;
+    drmCheck.then(function(isDrm){
+      if (isDrm && drmSeq === bookSeq && book) toast("Heads up: this book has encrypted resources — some content may not display");
+    });
 
     // TOC: EPUB 3 nav doc, falling back to EPUB 2 NCX, falling back to the spine
     var navItem = null, ncxItem = null;
@@ -669,6 +720,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     return out;
   }
 
+  // spine lookup with the same case tolerance zf() gives zip entries
+  function spineIndexOf(path){
+    if (!book || !path) return null;
+    var i = book.spineIdx[path];
+    if (i == null) i = book.spineIdxLower[path.toLowerCase()];
+    return i == null ? null : i;
+  }
+
   /* ---------- TOC panel ---------- */
   function buildTocPanel(toc){
     tocList.textContent = "";
@@ -682,9 +741,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       var li = doc.createElement("li");
       var a = doc.createElement("a");
       a.textContent = e.label || "Untitled";
-      if (e.path && book && book.spineIdx[e.path] != null){
+      var si = book ? spineIndexOf(e.path) : null;
+      if (si != null){
         a.href = "#";
-        a.setAttribute("data-path", e.path);
+        a.setAttribute("data-path", book.spine[si].path);
         a.setAttribute("data-frag", e.frag || "");
       }
       li.appendChild(a);
@@ -699,7 +759,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     ev.preventDefault();
     var path = a.getAttribute("data-path");
     if (!path || !book) return;
-    var idx = book.spineIdx[path];
+    var idx = spineIndexOf(path);
     if (idx == null) return;
     closeToc();
     showChapter(idx, a.getAttribute("data-frag") || "");
@@ -715,6 +775,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (on) marked = true;
     }
   }
+  var btnTocClose = doc.getElementById("btnTocClose");
   function openTocPanel(){
     if (!book){ toast("Open a book first"); return; }
     tocPanel.classList.add("open");
@@ -722,8 +783,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     btnToc.setAttribute("aria-expanded", "true");
     var active = tocList.querySelector("a.active");
     if (active) active.scrollIntoView({ block: "center" });
+    (active || btnTocClose).focus();
   }
   function closeToc(){
+    if (tocPanel.contains(doc.activeElement)) btnToc.focus();
     tocPanel.classList.remove("open");
     scrim.classList.remove("show");
     btnToc.setAttribute("aria-expanded", "false");
@@ -731,7 +794,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   btnToc.addEventListener("click", function(){
     if (tocPanel.classList.contains("open")) closeToc(); else openTocPanel();
   });
-  doc.getElementById("btnTocClose").addEventListener("click", closeToc);
+  btnTocClose.addEventListener("click", closeToc);
   scrim.addEventListener("click", closeToc);
 
   /* ---------- Rendering chapters ---------- */
@@ -772,20 +835,51 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         })
       : "";
     content.innerHTML = html;
-    resolveResources(path);
+    var pending = resolveResources(path);
     wireLinks(path);
     updateChapNav();
     highlightToc();
-    if (frag && scrollToFrag(frag)) return;
-    window.scrollTo(0, 0);
+    if (frag){
+      if (!scrollToFrag(frag)) window.scrollTo(0, 0);
+      // images get real sizes only after their blob URLs resolve, which shifts
+      // the layout; re-anchor once they've settled (unless we've moved on)
+      var seq = chapterSeq;
+      pending.then(waitForImages).then(function(){
+        if (seq === chapterSeq) scrollToFrag(frag);
+      });
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }
+
+  function waitForImages(){
+    var imgs = content.querySelectorAll("img"), waits = [];
+    for (var i = 0; i < imgs.length; i++){
+      (function(img){
+        if (img.complete || !img.getAttribute("src")) return;
+        waits.push(new Promise(function(res){
+          img.addEventListener("load", res, { once: true });
+          img.addEventListener("error", res, { once: true });
+          setTimeout(res, 3000);               // never hang on a stuck image
+        }));
+      })(imgs[i]);
+    }
+    return Promise.all(waits);
   }
 
   function attrSel(name, value){
     return "[" + name + '="' + value.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"]';
   }
+  function findFrag(frag){
+    return content.querySelector(attrSel("id", frag)) ||
+           content.querySelector("a" + attrSel("name", frag));
+  }
   function scrollToFrag(frag){
-    var el = content.querySelector(attrSel("id", frag)) ||
-             content.querySelector("a" + attrSel("name", frag));
+    var el = findFrag(frag);
+    if (!el && frag.indexOf("%") !== -1){
+      // nav/NCX hrefs are URLs, so non-ASCII ids arrive percent-encoded
+      try { el = findFrag(decodeURIComponent(frag)); } catch (e) {}
+    }
     if (!el) return false;
     el.scrollIntoView();
     return true;
@@ -793,35 +887,39 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   function resolveResources(chapterPath){
     var baseDir = dirOf(chapterPath);
-    var i, els;
+    var i, els, waits = [];
 
     els = content.querySelectorAll("img[src], audio[src], video[src], source[src]");
-    for (i = 0; i < els.length; i++) swapToBlob(els[i], "src", baseDir);
-    els = content.querySelectorAll("img[srcset], source[srcset]");
-    for (i = 0; i < els.length; i++) els[i].removeAttribute("srcset");
+    for (i = 0; i < els.length; i++) waits.push(swapToBlob(els[i], "src", baseDir));
     els = content.querySelectorAll("video[poster]");
-    for (i = 0; i < els.length; i++) swapToBlob(els[i], "poster", baseDir);
+    for (i = 0; i < els.length; i++) waits.push(swapToBlob(els[i], "poster", baseDir));
 
     // SVG <image> references (common for full-page cover images)
     els = content.querySelectorAll("image");
     for (i = 0; i < els.length; i++){
-      (function(el){
+      waits.push((function(el){
         var href = el.getAttribute("href") || el.getAttributeNS(XLINK_NS, "href") || el.getAttribute("xlink:href");
-        if (!href || isExternal(href)) return;
-        blobUrlFor(resolveHref(baseDir, href)).then(function(url){
+        if (!href || isExternal(href)) return null;
+        return blobUrlFor(resolveHref(baseDir, href)).then(function(url){
           if (!url) return;
           el.setAttribute("href", url);
           el.setAttributeNS(XLINK_NS, "xlink:href", url);
         });
-      })(els[i]);
+      })(els[i]));
     }
+    return Promise.all(waits);
   }
   function swapToBlob(el, attr, baseDir){
     var v = el.getAttribute(attr);
-    if (!v || isExternal(v) || v.charAt(0) === "#") return;   // remote/data URLs load as-is
+    if (!v || isExternal(v) || v.charAt(0) === "#") return null;   // data: URLs load as-is
     el.removeAttribute(attr);
-    blobUrlFor(resolveHref(baseDir, v)).then(function(url){
-      if (url) el.setAttribute(attr, url);
+    return blobUrlFor(resolveHref(baseDir, v)).then(function(url){
+      if (!url) return;
+      el.setAttribute(attr, url);
+      // a media element whose <source> children already failed selection
+      // won't retry on its own — restart it (#9)
+      var p = el.parentElement;
+      if (el.tagName === "SOURCE" && p && (p.tagName === "AUDIO" || p.tagName === "VIDEO")) p.load();
     });
   }
 
@@ -844,13 +942,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           return;
         }
         var path = resolveHref(baseDir, href), frag = fragOf(href);
-        if (!book || book.spineIdx[path] == null){
+        var idx = spineIndexOf(path);
+        if (idx == null){
           a.removeAttribute("href");                 // nothing sensible to open
           return;
         }
         a.addEventListener("click", function(e){
           e.preventDefault();
-          showChapter(book.spineIdx[path], frag);
+          var j = spineIndexOf(path);
+          if (j != null) showChapter(j, frag);
         });
       })(links[i]);
     }
@@ -871,9 +971,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   btnPrev.addEventListener("click", function(){ step(-1); });
   btnNext.addEventListener("click", function(){ step(1); });
   window.addEventListener("keydown", function(e){
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     if (e.key === "Escape"){ closeToc(); return; }
-    if (!book) return;
+    if (!book || tocPanel.classList.contains("open")) return;
     var t = e.target, tag = (t && t.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || tag === "select" || (t && t.isContentEditable)) return;
     if (e.key === "ArrowRight"){ e.preventDefault(); step(1); }
