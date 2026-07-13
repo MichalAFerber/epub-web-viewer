@@ -1,4 +1,4 @@
-# MyKK EPUB Viewer
+# EPUB Viewer
 
 A fast, mobile-first, **single-file** EPUB viewer. Drag & drop an `.epub`
 anywhere on the page and start reading instantly. It's a **viewer, not an
@@ -21,7 +21,6 @@ your browser.
 - ⏮️⏭️ **Chapter navigation** — Previous/Next buttons at the end of each
   chapter (plus `←`/`→` on a keyboard) and a "chapter x / y" position readout.
   Internal links and footnotes inside the book work too.
-- ➕ **New** (`+`) — clears the screen and opens a file picker.
 - 📋 **Copy** — copies the current chapter as plain text to your clipboard.
 - 🗑️ **Clear** — closes the book and empties the view.
 - 🎨 **Pick any background color** — a color swatch in the header lets you
@@ -29,14 +28,15 @@ your browser.
   for contrast. Your choice is **remembered** — saved to a cookie, with a
   `localStorage` fallback so even a downloaded `file://` copy remembers it.
   Starts on white.
-- 🫥 **Distraction-free** — once a book is open the header slides away; move
-  your mouse to the **top of the window** (or tap the top edge on mobile) to
-  bring it back.
+- 🫥 **Distraction-free** — once a book is open the header hides when you
+  **scroll down** and comes back when you **scroll up** (or after a few
+  seconds); tapping the top edge reveals it on mobile. A **×** in the
+  footer's corner tucks the footer away too.
 - 📱 **Mobile-first** & responsive, with safe-area support for notched phones.
 - 🔒 **Safe by default** — every chapter is sanitized with DOMPurify before it
   touches the page, so a malicious book can't run scripts. Your books never
   leave your device.
-- 🪶 **One file, no build** — `index.html` is self-contained (~160 KB) and the
+- 🪶 **One file, no build** — `index.html` is self-contained (~170 KB) and the
   viewer works offline, even straight from `file://`.
 - 📊 **Privacy-friendly analytics** — the hosted site uses a self-hosted,
   cookieless [Plausible](https://plausible.io/) instance (see [Privacy](#privacy)).
