@@ -63,12 +63,14 @@
   .iconbtn svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
   .iconbtn.iconbtn-gh svg{width:22px;height:22px;fill:currentColor;stroke:none}
 
-  /* ---------- Fast custom tooltips (native title is ~0.5s; this shows in ~0.06s) ---------- */
+  /* ---------- Fast custom tooltips (native title is ~0.5s; this shows in ~0.06s) ----------
+     Anchored to the trigger's RIGHT edge so tips on the right-aligned header/footer
+     controls grow leftward and never push the page wider (no stray scrollbars). */
   [data-tip]{position:relative}
   [data-tip]::after{
     content:attr(data-tip);
-    position:absolute; top:calc(100% + 6px); left:50%;
-    transform:translateX(-50%) scale(.96); transform-origin:top center;
+    position:absolute; top:calc(100% + 6px); right:0;
+    transform:scale(.96); transform-origin:top right;
     background:var(--text); color:var(--bg);
     font-size:.72rem; font-weight:600; line-height:1; letter-spacing:.01em;
     white-space:nowrap; padding:.38rem .5rem; border-radius:6px;
@@ -76,8 +78,8 @@
     opacity:0; pointer-events:none; z-index:70;
     transition:opacity .1s ease .06s, transform .1s ease .06s;
   }
-  [data-tip]:hover::after,[data-tip]:focus-visible::after{opacity:1; transform:translateX(-50%) scale(1)}
-  .footer [data-tip]::after{top:auto; bottom:calc(100% + 6px); transform-origin:bottom center}
+  [data-tip]:hover::after,[data-tip]:focus-visible::after{opacity:1; transform:scale(1)}
+  .footer [data-tip]::after{top:auto; bottom:calc(100% + 6px); transform-origin:bottom right}
   @media (hover:none){[data-tip]::after{display:none}}   /* no lingering tooltips on touch */
 
   .swatch-wrap{display:inline-flex; align-items:center}
