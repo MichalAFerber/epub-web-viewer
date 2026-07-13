@@ -131,7 +131,10 @@
 
   /* ---------- Auto-hiding header while reading ---------- */
   .hover-zone{display:none}
-  body.viewing .hover-zone{display:block; position:fixed; top:0; left:0; right:0; height:22px; z-index:35}
+  body.viewing .hover-zone{display:block; position:fixed; top:0; left:0; right:0; height:22px; z-index:35; cursor:pointer}
+  /* the collapsed header is this thick, tappable line over the page (the topbar covers it when shown) */
+  body.viewing .hover-zone::before{content:""; position:absolute; top:0; left:0; right:0; height:7px; background:var(--accent); box-shadow:0 1px 6px var(--shadow)}
+  body.viewing .hover-zone::after{content:""; position:absolute; top:1.5px; left:50%; transform:translateX(-50%); width:46px; height:4px; border-radius:2px; background:var(--accent-contrast); opacity:.7}
   body.viewing .topbar{
     position:fixed; top:0; left:0; right:0; z-index:36;
     transform:translateY(-115%); transition:transform .28s ease;
@@ -361,7 +364,7 @@
     <div class="empty-inner">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
       <p class="empty-title">Drop an EPUB to read</p>
-      <p class="empty-sub">Drag &amp; drop anywhere, or tap to open. Your books never leave your device.</p>
+      <p class="empty-sub">Drag &amp; drop anywhere or tap to open. Accepts .epub — your books never leave your device.</p>
     </div>
   </section>
   <article id="content" class="book-body" hidden></article>
@@ -1156,7 +1159,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
   /* ---------- Auto-hiding header: show on scroll up (or at top) & for HEADER_TIMEOUT after,
      hide on scroll down ---------- */
-  var HEADER_TIMEOUT = 5000;
+  var HEADER_TIMEOUT = 3000;
   var headerTimer = null, lastScrollY = 0, headerHovered = false;
   var topbarEl = doc.querySelector(".topbar");
 
@@ -1190,8 +1193,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   topbarEl.addEventListener("mouseenter", function(){ headerHovered = true; clearTimeout(headerTimer); headerTimer = null; });
   topbarEl.addEventListener("mouseleave", function(){ headerHovered = false; if (body.classList.contains("peek")) armHeaderTimer(); });
 
-  // Tapping the top strip reveals the header (touch, where there's no scroll-up-to-reveal yet)
+  // Reveal via the top strip / handle — hover, tap, or click (touch has no scroll-up-to-reveal)
   hoverZone.addEventListener("click", showHeader);
+  hoverZone.addEventListener("mouseenter", showHeader);
+  hoverZone.addEventListener("touchstart", function(){ showHeader(); }, { passive:true });
 
   /* ---------- Background color (chosen by the user, remembered in a cookie) ---------- */
   function setCookie(name, val){
