@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://epub-viewer.us/sitemap.xml
